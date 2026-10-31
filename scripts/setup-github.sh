@@ -143,9 +143,24 @@ fi
 
 # ---------------------------------------------------------------- 3. workflow permissions
 say "3/5 Workflow token permissions = read/write"
-run api PUT "${API}/repos/${OWNER}/${REPO}/actions/permissions/workflow" -o /dev/null \
-	-f default_workflow_permissions=write -F can_approve_pull_request_reviews=true
-note "GITHUB_TOKEN can create the release"
+if [[ "$DRY_RUN" == "1" ]]; then
+	printf '    [dry-run] PUT %s/repos/%s/%s/actions/permissions/workflow {"default_workflow_permissions":"write"}\n' \
+		"$API" "$OWNER" "$REPO"
+else
+	PERM_STATUS="$(api_status PUT "${API}/repos/${OWNER}/${REPO}/actions/permissions/workflow" \
+		-d '{"default_workflow_permissions":"write","can_approve_pull_request_reviews":true}')"
+	if [[ "$PERM_STATUS" != "204" ]]; then
+		# The PR-approval flag can be disabled by an organisation policy; it is not required.
+		PERM_STATUS="$(api_status PUT "${API}/repos/${OWNER}/${REPO}/actions/permissions/workflow" \
+			-d '{"default_workflow_permissions":"write"}')"
+	fi
+	if [[ "$PERM_STATUS" != "204" ]]; then
+		printf 'error: could not set workflow permissions (HTTP %s).\n' "$PERM_STATUS" >&2
+		printf '       Settings -> Actions -> General -> Workflow permissions -> Read and write.\n' >&2
+		exit 1
+	fi
+	note "GITHUB_TOKEN can now create the release"
+fi
 
 # ---------------------------------------------------------------- 4. push main
 say "4/5 Push main"
