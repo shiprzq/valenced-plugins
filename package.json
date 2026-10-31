@@ -1,0 +1,48 @@
+{
+	"name": "valenced-plugins",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Valenced plugin repository: sources, release pipeline and generated index.json",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/<OWNER>/<REPO>.git"
+	},
+	"homepage": "https://<OWNER>.github.io/<REPO>/",
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"build": "valenced-plugin build --plugins-dir plugins",
+		"zip": "node scripts/zip-plugins.mjs",
+		"validate": "node scripts/validate-manifests.mjs",
+		"index": "node scripts/build-index.mjs",
+		"test": "node scripts/test-pipeline.mjs"
+	},
+	"dependencies": {
+		"@valenced/plugin-cli": "git+https://github.com/Valenced/valenced-plugin-cli.git",
+		"@valenced/types": "git+https://github.com/Valenced/valenced-types.git"
+	},
+	"devDependencies": {
+		"@types/node": "^26.4.1",
+		"@types/react": "^19.2.18",
+		"react-native": "0.86.0",
+		"typescript": "^7.0.2"
+	},
+	"overrides": {
+		"@react-native/community-cli-plugin": "npm:dry-uninstall",
+		"@react-native/codegen": "npm:dry-uninstall",
+		"babel-jest": "npm:dry-uninstall",
+		"babel-plugin-syntax-hermes-parser": "npm:dry-uninstall",
+		"hermes-compiler": "npm:dry-uninstall",
+		"jsc-android": "npm:dry-uninstall",
+		"react-devtools-core": "npm:dry-uninstall",
+		"recyclerlistview": "npm:dry-uninstall",
+		"react-native-gesture-handler": "npm:dry-uninstall",
+		"react-native-screens": "npm:dry-uninstall"
+	},
+	"trustedDependencies": [
+		"@valenced/plugin-cli",
+		"@swc/core"
+	]
+}

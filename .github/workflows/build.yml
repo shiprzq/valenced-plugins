@@ -1,0 +1,51 @@
+name: Build and release
+
+# Push a tag matching v* to publish every plugin in plugins/ as a release asset:
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# Each asset is named after the plugin id: dist/<plugin-id>.zip.
+# The release tag is the published version, so the tag must equal the version in
+# plugins/<dir>/manifest.json (validate-manifests.mjs enforces this).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, validate, release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build plugin bundles
+        run: npm run build
+
+      - name: Package release archives
+        run: npm run zip
+
+      - name: Validate manifests
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: node scripts/validate-manifests.mjs
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true

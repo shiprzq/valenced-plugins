@@ -1,0 +1,22 @@
+{
+	"format": 1,
+	"id": "com.redpen.plugin",
+	"name": "Redpen",
+	"description": "Grammar, spelling and punctuation cleanup for outgoing messages, with a per-channel button in the channel list and an optional preview step.",
+	"author": "Redpen Maintainers (https://valenced.app \"Valenced\")",
+	"version": "1.0.0",
+	"dependencies": {
+		"valenced.api": {
+			"version": ">=1 <2"
+		},
+		"valenced.settings.plugins": {
+			"version": "*"
+		},
+		"discord": {
+			"version": "*"
+		}
+	},
+	"dist": {
+		"script": "index.js"
+	}
+}

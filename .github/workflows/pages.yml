@@ -1,0 +1,59 @@
+name: Deploy repository index
+
+# Produces https://<OWNER>.github.io/<REPO>/index.json — the URL Valenced asks for.
+# Deployment goes through GitHub Actions, not a gh-pages branch: Pages -> Source must be
+# "GitHub Actions".
+#
+# Triggers:
+# - release: published   a human published a release
+# - workflow_run         the release workflow finished. Needed because a release created
+#                        with the repository's own GITHUB_TOKEN does not fire `release`
+#                        events (GitHub suppresses events authored by GITHUB_TOKEN).
+# - workflow_dispatch    manual re-deploy
+
+on:
+  release:
+    types: [published]
+  workflow_run:
+    workflows: ['Build and release']
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build index and deploy Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate index.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/build-index.mjs
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
