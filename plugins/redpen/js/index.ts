@@ -1,6 +1,6 @@
 /// <reference types="@valenced/types/plugins/settings.plugins" />
 
-import { ActionSheetActionCreators, ToastActionCreators } from '@valenced/discord/actions'
+import { ActionSheetActionCreators } from '@valenced/discord/actions'
 import { getModules } from '@valenced/modules/finders'
 import { withProps } from '@valenced/modules/finders/filters'
 import InputSheet from './ui/InputSheet'
@@ -19,10 +19,9 @@ import {
 	resetSendState,
 	setSendLogger,
 } from './send'
-import { installDock } from './dock'
 import { CORRECTOR_VERSION, correctText } from './corrector'
 import { correctorOptions } from './settings'
-import { installSidebar } from './sidebar'
+import { installInjection, resetInjection } from './inject'
 import {
 	isChannelOpen,
 	isSurfaceMounted,
@@ -127,40 +126,19 @@ export default plugin<{ jsonStorage: RedpenStorage }>({
 			),
 		)
 
-		/* ---------------------------------------------------------------- dock */
+		/* --------------------------------------------------------------- UI */
+		// Structural injection: one hook over the JSX runtime, no component names.
 		cleanup(
-			installDock({
+			installInjection({
 				logger,
-				isEnabled: () => readRedpenSettings().showDockButton,
+				isDockEnabled: () => readRedpenSettings().showDockButton,
+				isRowButtonEnabled: () => readRedpenSettings().showSidebarButton,
 				onError: error => plugin.reportError(error),
-				onDegrade: () => {
-					ToastActionCreators.open('REDPEN_DOCK_UNAVAILABLE', {
-						text: 'Redpen: message dock button unavailable in this build.',
-						variant: 'critical',
-						duration: 4000,
-					})
-				},
 			}).dispose,
 		)
 
 		/* ------------------------------------------- correct outgoing messages */
 		installOutgoingRewrite(cleanup, () => readRedpenSettings().autoCorrectOutgoing)
-
-		/* ------------------------------------------------------------- sidebar */
-		cleanup(
-			installSidebar({
-				logger,
-				isEnabled: () => readRedpenSettings().showSidebarButton,
-				onError: error => plugin.reportError(error),
-				onDegrade: () => {
-					ToastActionCreators.open('REDPEN_SIDEBAR_UNAVAILABLE', {
-						text: 'Redpen: channel rows unavailable in this build.',
-						variant: 'critical',
-						duration: 4000,
-					})
-				},
-			}),
-		)
 
 		/* ------------------------------------------------------------ settings */
 		registerRedpenSettings(api, cleanup)
@@ -187,6 +165,7 @@ export default plugin<{ jsonStorage: RedpenStorage }>({
 		// the resolved send candidates.
 		outgoingPatch = undefined
 		resetSendState()
+		resetInjection()
 		resetState()
 	},
 

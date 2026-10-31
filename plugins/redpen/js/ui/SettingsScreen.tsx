@@ -3,8 +3,7 @@ import Page from '@valenced/components/Page'
 import { ScrollView, View, StyleSheet } from 'react-native'
 import { RULE_LABELS } from '../corrector'
 import { correctorVersionLabel, useRedpenSettings, writeRedpenSettings } from '../settings'
-import { describeSidebarInjection } from '../sidebar'
-import { describeDockInjection } from '../dock'
+import { describeInjection, describeInjectionSamples } from '../inject'
 import { describeSendAction } from '../send'
 import type { RedpenApi } from '../types'
 
@@ -149,18 +148,23 @@ export default function SettingsScreen(_props: SettingsScreenProps) {
 
 					<TableRowGroup title="Diagnostics">
 						<TableRow
-							label="Sidebar injection"
+							label="UI injection"
 							trailing={
 								<Text variant="text-sm/medium" color="text-muted">
-									{describeSidebarInjection()}
+									{describeInjection()}
+								</Text>
+							}
+							subLabel={
+								<Text variant="text-xs/medium" color="text-muted">
+									Dock button and channel-row buttons, matched structurally.
 								</Text>
 							}
 						/>
 						<TableRow
-							label="Message dock injection"
+							label="Elements matched"
 							trailing={
-								<Text variant="text-sm/medium" color="text-muted">
-									{describeDockInjection()}
+								<Text variant="text-xs/medium" color="text-muted">
+									{describeInjectionSamples()}
 								</Text>
 							}
 						/>
