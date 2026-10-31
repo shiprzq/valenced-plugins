@@ -126,6 +126,33 @@ that, deterministically — same sources in, byte-identical ZIP out.
 
 ---
 
+## Steps 1–5 in one command (optional)
+
+`scripts/setup-github.sh` does everything in steps 1–5 through the API: create the public
+repository, set the Pages source to GitHub Actions, grant the workflow token write access, push
+`main`, tag the manifest version, and wait for the release and deploy to finish.
+
+```bash
+GH_TOKEN=<token> ./scripts/setup-github.sh <OWNER> <REPO>          # e.g. someuser valenced-plugins
+DRY_RUN=1 ./scripts/setup-github.sh <OWNER> <REPO>                 # print the plan, change nothing
+```
+
+Token permissions on that repository: **Contents: write**, **Administration: write** (repo
+creation + Pages), **Workflows: write** (pushing `.github/workflows`), **Pages: write**. A classic
+PAT needs `repo` and `workflow` scopes. The token is read from `GH_TOKEN` and never written to
+disk. Revoke it when the script finishes.
+
+The script aborts before touching GitHub if the tag version does not match
+`plugins/redpen/manifest.json`, if the working tree is dirty, or if Pages is deployed from a
+branch. `scripts/gh-watch.mjs` is the watcher it calls; run it alone to re-check a deploy:
+
+```bash
+GH_TOKEN=<token> node scripts/gh-watch.mjs <OWNER> <REPO> v1.0.0
+# exit 0 deployed, 1 workflow failed, 2 timed out, 3 API/auth problem
+```
+
+The manual equivalent follows.
+
 ## Step 1 — create the repository
 
 Create an empty **public** repository on GitHub (for example `valenced-plugins`) and push this
