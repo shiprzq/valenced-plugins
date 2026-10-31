@@ -30,6 +30,9 @@ let degraded = false
 /** Set by `index.ts`; the button calls it to open the input surface. */
 let opener: ((channel: ChannelLike) => void) | undefined
 
+/** Set by `index.ts`; lets settings re-install the UI hooks after a suspension. */
+let injectionRestarter: (() => void) | undefined
+
 function emit(): void {
 	for (const listener of listeners) {
 		try {
@@ -115,6 +118,15 @@ export function openRedpen(channel: ChannelLike): void {
 	opener?.(channel)
 }
 
+export function setInjectionRestarter(fn: (() => void) | undefined): void {
+	injectionRestarter = fn
+}
+
+/** Re-installs the UI hooks after the user clears a suspension. */
+export function restartInjection(): void {
+	injectionRestarter?.()
+}
+
 export function markDegraded(): void {
 	degraded = true
 	emit()
@@ -127,6 +139,7 @@ export function isDegraded(): boolean {
 /** Clears everything. Called from `stop()`. */
 export function resetState(): void {
 	opener = undefined
+	injectionRestarter = undefined
 	openChannels.clear()
 	inFlight.clear()
 	openStep = undefined

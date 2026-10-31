@@ -1,10 +1,11 @@
 import { Stores } from '@valenced/discord/flux'
-import { React, ReactJSXRuntime } from '@valenced/react'
+import { ReactJSXRuntime } from '@valenced/react'
 import { before } from '@valenced/patcher'
 import { createElement, isValidElement } from 'react'
 import type { ReactElement, ReactNode } from 'react'
-import { View } from 'react-native'
+import { Text, TextInput, View } from 'react-native'
 import DockButton from './ui/DockButton'
+import Guard from './ui/Guard'
 import SidebarButton from './ui/SidebarButton'
 import { channelLabel, isTextChannel, type ChannelLike, type RedpenLogger } from './types'
 
@@ -171,6 +172,17 @@ function rowChannel(element: ReactNode): ChannelLike | undefined {
 	return looksLikeRow ? channel : undefined
 }
 
+/**
+ * Text subtrees are off limits. A `View` inside a `Text` is a fatal render error on Android,
+ * and channel mentions — which carry a `channel` prop and a press handler — are exactly the
+ * shape that would otherwise be mistaken for a sidebar row.
+ */
+function isTextLike(type: unknown): boolean {
+	if (type === Text || type === TextInput) return true
+	// Host components are strings in React Native; keep text hosts out of the scan too.
+	return typeof type === 'string' && /text|label|paragraph/i.test(type)
+}
+
 function describeKeys(props: Record<string, unknown>): string {
 	return Object.keys(props).slice(0, 8).join(',')
 }
@@ -233,11 +245,15 @@ function editChildren(
 
 			if (channelId) {
 				writable().push(
-					createElement(DockButton, {
-						key: DOCK_MARKER,
-						channelId,
-						channelName: channelLabel(channel ?? resolveChannel(channelId)),
-					}),
+					createElement(
+						Guard,
+						{ key: DOCK_MARKER, onError: options.onError },
+						createElement(DockButton, {
+							key: 'redpen-dock-button',
+							channelId,
+							channelName: channelLabel(channel ?? resolveChannel(channelId)),
+						}),
+					),
 				)
 				stats.dockInjected += 1
 			}
@@ -265,14 +281,18 @@ function editChildren(
 			}
 
 			writable()[index] = createElement(
-				View,
-				{ key: `redpen-row-${channel.id}`, style: ROW_WRAPPER, collapsable: false },
-				createElement(View, { key: 'redpen-row-slot', style: ROW_SLOT }, child as ReactElement),
-				createElement(SidebarButton, {
-					key: 'redpen-row-button',
-					channelId: channel.id,
-					channelName: channelLabel(channel),
-				}),
+				Guard,
+				{ key: `redpen-row-${channel.id}`, onError: options.onError },
+				createElement(
+					View,
+					{ style: ROW_WRAPPER, collapsable: false },
+					createElement(View, { key: 'redpen-row-slot', style: ROW_SLOT }, child as ReactElement),
+					createElement(SidebarButton, {
+						key: 'redpen-row-button',
+						channelId: channel.id,
+						channelName: channelLabel(channel),
+					}),
+				),
 			)
 			stats.rowsInjected += 1
 		}
@@ -304,22 +324,19 @@ function injectIntoProps(
 let activeUnpatchers: (() => void)[] = []
 
 /**
- * The objects every element is created through.
+ * The object every element is created through.
  *
- * Discord and Valenced both compile to the automatic JSX runtime, so `ReactJSXRuntime` is
- * the hot path; `React.createElement` is patched too for any component still on the classic
- * runtime. Both are module namespaces, so their properties are looked up at call time and a
- * late patch still applies.
+ * Discord and Valenced compile to the automatic JSX runtime, so `ReactJSXRuntime` is the
+ * hot path and the only thing patched. `React.createElement` is deliberately left alone:
+ * React internals and third-party helpers call it with children as varargs, and rewriting
+ * those arguments couples Redpen to far more of the app than a button is worth.
  */
-function resolveRuntimes(): { object: Record<string, unknown>; keys: string[] }[] {
-	const runtimes: { object: Record<string, unknown>; keys: string[] }[] = []
-
+function resolveRuntime(): Record<string, unknown> | undefined {
 	try {
-		if (ReactJSXRuntime && typeof (ReactJSXRuntime as { jsx?: unknown }).jsx === 'function') {
-			runtimes.push({ object: ReactJSXRuntime as unknown as Record<string, unknown>, keys: ['jsx', 'jsxs'] })
-		}
+		const direct = ReactJSXRuntime as unknown as Record<string, unknown>
+		if (direct && typeof direct.jsx === 'function') return direct
 	} catch {
-		// Ignore: fall through to the global.
+		// Fall through to the global.
 	}
 
 	try {
@@ -327,22 +344,43 @@ function resolveRuntimes(): { object: Record<string, unknown>; keys: string[] }[
 			| { react?: { ReactJSXRuntime?: Record<string, unknown> } }
 			| undefined
 		const runtime = globalCandidate?.react?.ReactJSXRuntime
-		if (runtime && typeof runtime.jsx === 'function' && !runtimes.some(entry => entry.object === runtime)) {
-			runtimes.push({ object: runtime, keys: ['jsx', 'jsxs'] })
-		}
+		if (runtime && typeof runtime.jsx === 'function') return runtime
 	} catch {
-		// Ignore.
+		// Not reachable.
 	}
 
-	try {
-		if (React && typeof (React as { createElement?: unknown }).createElement === 'function') {
-			runtimes.push({ object: React as unknown as Record<string, unknown>, keys: ['createElement'] })
-		}
-	} catch {
-		// Ignore.
-	}
+	return undefined
+}
 
-	return runtimes
+/**
+ * Runaway protection.
+ *
+ * If the matcher ever starts injecting on every render of every element, the app would keep
+ * growing trees until it is killed. The breaker counts injections per second; past the
+ * limit the hook unpatches itself and leaves a reason in Diagnostics.
+ */
+const BREAKER_LIMIT = 2000
+const BREAKER_WINDOW_MS = 1000
+let windowStartedAt = 0
+let windowCount = 0
+let breakerTripped = false
+
+function breakerAllows(): boolean {
+	if (breakerTripped) return false
+
+	const now = Date.now()
+	if (now - windowStartedAt > BREAKER_WINDOW_MS) {
+		windowStartedAt = now
+		windowCount = 0
+	}
+	windowCount += 1
+
+	if (windowCount > BREAKER_LIMIT) {
+		breakerTripped = true
+		stats.reason = 'disabled after runaway injection'
+		return false
+	}
+	return true
 }
 
 /**
@@ -353,25 +391,38 @@ function resolveRuntimes(): { object: Record<string, unknown>; keys: string[] }[
 export function installInjection(options: InjectionOptions): InjectionHandle {
 	if (stats.installed && activeUnpatchers.length > 0) return { dispose: () => uninstall() }
 
-	const runtimes = resolveRuntimes()
-	if (runtimes.length === 0) {
+	const runtime = resolveRuntime()
+	if (!runtime) {
 		stats.reason = 'jsx runtime not reachable'
 		options.logger.warn('[redpen] cannot reach the JSX runtime; UI buttons disabled')
 		return { dispose: () => {} }
 	}
 
+	breakerTripped = false
+	windowCount = 0
+	windowStartedAt = Date.now()
+
 	const unpatchers: (() => void)[] = []
 
-	const safeInject = (props: Record<string, unknown>): Record<string, unknown> | undefined => {
+	const report = (error: unknown): void => {
 		try {
+			options.onError(error)
+		} catch {
+			// Nothing else to do.
+		}
+	}
+
+	const safeInject = (
+		type: unknown,
+		props: Record<string, unknown>,
+	): Record<string, unknown> | undefined => {
+		try {
+			if (isTextLike(type)) return undefined
+			if (!breakerAllows()) return undefined
 			return injectIntoProps(props, options)
 		} catch (error) {
 			// A throw inside a jsx hook would break Discord's render; swallow and pass through.
-			try {
-				options.onError(error)
-			} catch {
-				// Nothing else to do.
-			}
+			report(error)
 			return undefined
 		}
 	}
@@ -385,40 +436,18 @@ export function installInjection(options: InjectionOptions): InjectionHandle {
 		const props = rawProps as Record<string, unknown>
 		if (props.children === undefined) return args
 
-		const patched = safeInject(props)
+		const patched = safeInject(type, props)
 		return patched ? [type, patched, key] : args
 	}
 
-	/** `createElement(type, props, ...children)`. */
-	const createElementHook = (args: unknown[]): unknown[] => {
-		stats.elementsSeen += 1
-		const [type, rawProps, ...children] = args
-		const props =
-			rawProps && typeof rawProps === 'object' ? (rawProps as Record<string, unknown>) : {}
-		if (children.length === 0 && props.children === undefined) return args
-
-		const patched = safeInject({ ...props, children: children.length > 0 ? children : props.children })
-		if (!patched) return args
-
-		const { children: patchedChildren, ...rest } = patched
-		const forwarded = toArray(patchedChildren as ReactNode) ?? []
-		return [type, rest, ...forwarded]
-	}
-
-	for (const { object, keys } of runtimes) {
-		for (const name of keys) {
-			if (typeof object[name] !== 'function') continue
-			try {
-				unpatchers.push(
-					before(
-						object as Record<string, (...args: unknown[]) => unknown>,
-						name,
-						(name === 'createElement' ? createElementHook : jsxHook) as never,
-					),
-				)
-			} catch (error) {
-				options.onError(error)
-			}
+	for (const name of ['jsx', 'jsxs'] as const) {
+		if (typeof runtime[name] !== 'function') continue
+		try {
+			unpatchers.push(
+				before(runtime as Record<typeof name, (...args: unknown[]) => unknown>, name, jsxHook as never),
+			)
+		} catch (error) {
+			report(error)
 		}
 	}
 

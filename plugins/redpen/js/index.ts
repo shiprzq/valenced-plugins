@@ -1,6 +1,7 @@
 /// <reference types="@valenced/types/plugins/settings.plugins" />
 
 import { ActionSheetActionCreators } from '@valenced/discord/actions'
+import { AppState } from 'react-native'
 import { getModules } from '@valenced/modules/finders'
 import { withProps } from '@valenced/modules/finders/filters'
 import InputSheet from './ui/InputSheet'
@@ -21,7 +22,7 @@ import {
 } from './send'
 import { CORRECTOR_VERSION, correctText } from './corrector'
 import { correctorOptions } from './settings'
-import { installInjection, resetInjection } from './inject'
+import { installInjection, resetInjection, type InjectionHandle } from './inject'
 import {
 	isChannelOpen,
 	isSurfaceMounted,
@@ -29,6 +30,7 @@ import {
 	markSurfaceClosed,
 	markSurfaceOpen,
 	resetState,
+	setInjectionRestarter,
 	setSheetOpener,
 } from './state'
 import {
@@ -43,6 +45,26 @@ import {
 
 /** How long to wait for Discord's sheet layer to mount our component. */
 const SHEET_MOUNT_TIMEOUT_MS = 2500
+
+/**
+ * How long injection must survive before the boot is considered clean.
+ *
+ * The marker is written before the hooks go in and cleared on this timer, on `stop`, or as
+ * soon as the app is backgrounded. If a session ends with the marker still set, the app
+ * almost certainly died while Redpen's views were live, so the next boot leaves them out
+ * and says so in Diagnostics instead of risking the same crash.
+ */
+const BOOT_MARKER = 'injecting'
+const BOOT_CLEAN_AFTER_MS = 30_000
+
+/**
+ * Injection defaults change once per safety revision.
+ *
+ * 1.2.1 turns the channel-row buttons off for anyone upgrading, because that is the
+ * high-volume injection and the most likely cause of the crash seen on 1.2.0. The dock
+ * button stays on. The row toggle in settings turns them back on immediately.
+ */
+const SAFETY_VERSION = '2'
 
 /** Only one `sendMessage` rewrite may be installed at a time. */
 let outgoingPatch: (() => void) | undefined
@@ -87,6 +109,35 @@ function installOutgoingRewrite(
  * Teardown is synchronous: every patch, subscription, finder and listener is passed to
  * `api.cleanup`, and `stop` only clears module-level state. No reload is required.
  */
+/**
+ * Clears the boot marker once the app has been usable for a while, or as soon as it is
+ * backgrounded. Both mean the session did not die on Redpen's views.
+ */
+function armBootCleanup(cleanup: (...fns: (() => void)[]) => void, api: RedpenApi): void {
+	let cleared = false
+
+	const clear = (): void => {
+		if (cleared) return
+		cleared = true
+		void api.jsonStorage.set({ settings: { bootMarker: '' } })
+	}
+
+	const timer = setTimeout(clear, BOOT_CLEAN_AFTER_MS)
+	cleanup(() => {
+		clearTimeout(timer)
+		clear()
+	})
+
+	try {
+		const subscription = AppState.addEventListener('change', state => {
+			if (state !== 'active') clear()
+		})
+		cleanup(() => subscription.remove())
+	} catch (error) {
+		api.plugin.reportError(error)
+	}
+}
+
 export default plugin<{ jsonStorage: RedpenStorage }>({
 	jsonStorage: {
 		load: true,
@@ -105,6 +156,14 @@ export default plugin<{ jsonStorage: RedpenStorage }>({
 		// Keep the read-only version in `storage.json` in sync with the bundled corrector.
 		if (readRedpenSettings().correctorVersion !== CORRECTOR_VERSION) {
 			void jsonStorage.set({ settings: { correctorVersion: CORRECTOR_VERSION } })
+		}
+
+		// One-time safety migration: start from the dock button only.
+		if (readRedpenSettings().safetyVersion !== SAFETY_VERSION) {
+			logger.warn('[redpen] applying safety defaults: channel-row buttons off, dock button on')
+			void jsonStorage.set({
+				settings: { safetyVersion: SAFETY_VERSION, showSidebarButton: false },
+			})
 		}
 
 		/* ---------------------------------------------------------------- send */
@@ -128,14 +187,38 @@ export default plugin<{ jsonStorage: RedpenStorage }>({
 
 		/* --------------------------------------------------------------- UI */
 		// Structural injection: one hook over the JSX runtime, no component names.
-		cleanup(
-			installInjection({
+		const boot = readRedpenSettings()
+
+		// A marker left over from the previous session means the app did not survive
+		// injection last time. Stay off this boot and let the user opt back in.
+		if (boot.bootMarker === BOOT_MARKER) {
+			logger.warn('[redpen] UI injection suspended: the last session ended while it was live')
+			void jsonStorage.set({ settings: { bootMarker: '', injectionSuspended: true } })
+		}
+
+		const injection = (): InjectionHandle => {
+			if (readRedpenSettings().injectionSuspended) {
+				logger.warn('[redpen] UI injection is suspended; re-enable it in Redpen settings')
+				return { dispose: () => {} }
+			}
+
+			void jsonStorage.set({ settings: { bootMarker: BOOT_MARKER } })
+			const handle = installInjection({
 				logger,
 				isDockEnabled: () => readRedpenSettings().showDockButton,
 				isRowButtonEnabled: () => readRedpenSettings().showSidebarButton,
 				onError: error => plugin.reportError(error),
-			}).dispose,
-		)
+			})
+			armBootCleanup(cleanup, api)
+			return handle
+		}
+
+		let injectionHandle = injection()
+		cleanup(() => injectionHandle.dispose())
+		setInjectionRestarter(() => {
+			injectionHandle.dispose()
+			injectionHandle = injection()
+		})
 
 		/* ------------------------------------------- correct outgoing messages */
 		installOutgoingRewrite(cleanup, () => readRedpenSettings().autoCorrectOutgoing)
@@ -147,6 +230,7 @@ export default plugin<{ jsonStorage: RedpenStorage }>({
 		setSheetOpener(channel => openInputSurface(channel, plugin))
 
 		cleanup(() => {
+			setInjectionRestarter(undefined)
 			setSheetOpener(undefined)
 			initSettingsEmpty()
 			try {

@@ -4,6 +4,7 @@ import { ScrollView, View, StyleSheet } from 'react-native'
 import { RULE_LABELS } from '../corrector'
 import { correctorVersionLabel, useRedpenSettings, writeRedpenSettings } from '../settings'
 import { describeInjection, describeInjectionSamples } from '../inject'
+import { restartInjection } from '../state'
 import { describeSendAction } from '../send'
 import type { RedpenApi } from '../types'
 
@@ -75,7 +76,7 @@ export default function SettingsScreen(_props: SettingsScreenProps) {
 							}
 							subLabel={
 								<Text variant="text-xs/medium" color="text-muted">
-									Adds a small button to every text channel, DM and thread row.
+									Adds a small button to every text channel, DM and thread row. This is the heavier injection — leave it off if the app ever closes unexpectedly.
 								</Text>
 							}
 						/>
@@ -156,7 +157,9 @@ export default function SettingsScreen(_props: SettingsScreenProps) {
 							}
 							subLabel={
 								<Text variant="text-xs/medium" color="text-muted">
-									Dock button and channel-row buttons, matched structurally.
+									{settings.injectionSuspended
+										? 'Suspended after the app closed while it was active.'
+										: 'Dock button and channel-row buttons, matched structurally.'}
 								</Text>
 							}
 						/>

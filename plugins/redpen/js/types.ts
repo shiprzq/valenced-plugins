@@ -23,6 +23,16 @@ export interface RedpenSettings {
 	 * action; consumed by `correct(input, { dictionary })`.
 	 */
 	userDictionary?: Record<string, string>
+	/**
+	 * Set to `injecting` while the UI hooks are live and cleared once the app is running
+	 * normally. A marker left behind means the last session ended while injection was
+	 * active — a crash — so the next boot stays safe.
+	 */
+	bootMarker?: string
+	/** Set after a boot that did not survive injection; injection stays off until cleared. */
+	injectionSuspended?: boolean
+	/** Bumped when a release changes injection defaults; drives the one-time migration. */
+	safetyVersion?: string
 }
 
 /** Shape of `storage.json`: everything lives under a single top-level `settings` key. */
@@ -38,6 +48,9 @@ export const DEFAULT_SETTINGS: RedpenSettings = {
 	disabledRules: [],
 	correctorVersion: CORRECTOR_VERSION,
 	userDictionary: {},
+	bootMarker: '',
+	injectionSuspended: false,
+	safetyVersion: '',
 }
 
 export const DEFAULT_STORAGE: RedpenStorage = { settings: DEFAULT_SETTINGS }
