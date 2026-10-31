@@ -1,8 +1,10 @@
 import { Design, FormSwitch } from '@valenced/discord/design'
 import Page from '@valenced/components/Page'
 import { ScrollView, View, StyleSheet } from 'react-native'
+import { RULE_LABELS } from '../corrector'
 import { correctorVersionLabel, useRedpenSettings, writeRedpenSettings } from '../settings'
 import { describeSidebarInjection } from '../sidebar'
+import { describeDockInjection } from '../dock'
 import { describeSendAction } from '../send'
 import type { RedpenApi } from '../types'
 
@@ -26,6 +28,25 @@ export default function SettingsScreen(_props: SettingsScreenProps) {
 		<Page>
 			<ScrollView>
 				<Stack spacing={24}>
+					<TableRowGroup title="Buttons">
+						<TableRow
+							label="Show the button in the message dock"
+							trailing={
+								<FormSwitch
+									value={settings.showDockButton}
+									onValueChange={(value: boolean) => {
+										void writeRedpenSettings({ showDockButton: value })
+									}}
+								/>
+							}
+							subLabel={
+								<Text variant="text-xs/medium" color="text-muted">
+									Next to the gift, emoji and microphone buttons in the chat bar.
+								</Text>
+							}
+						/>
+					</TableRowGroup>
+
 					<TableRowGroup title="Sending">
 						<TableRow
 							label="Show preview before sending"
@@ -63,6 +84,50 @@ export default function SettingsScreen(_props: SettingsScreenProps) {
 
 					<TableRowGroup title="Corrections">
 						<TableRow
+							label="Correct messages as you send them"
+							trailing={
+								<FormSwitch
+									value={settings.autoCorrectOutgoing}
+									onValueChange={(value: boolean) => {
+										void writeRedpenSettings({ autoCorrectOutgoing: value })
+									}}
+								/>
+							}
+							subLabel={
+								<Text variant="text-xs/medium" color="text-muted">
+									Fixes the text of every message you send, even without opening Redpen.
+								</Text>
+							}
+						/>
+					</TableRowGroup>
+
+					<TableRowGroup title="Rules">
+						{RULE_LABELS.map(rule => (
+							<TableRow
+								key={rule.id}
+								label={rule.label}
+								trailing={
+									<FormSwitch
+										value={!settings.disabledRules.includes(rule.id)}
+										onValueChange={(enabled: boolean) => {
+											const next = new Set(settings.disabledRules)
+											if (enabled) next.delete(rule.id)
+											else next.add(rule.id)
+											void writeRedpenSettings({ disabledRules: [...next] })
+										}}
+									/>
+								}
+								subLabel={
+									<Text variant="text-xs/medium" color="text-muted">
+										{rule.description}
+									</Text>
+								}
+							/>
+						))}
+					</TableRowGroup>
+
+					<TableRowGroup title="Reset">
+						<TableRow
 							label="Reset corrections"
 							arrow
 							onPress={resetCorrections}
@@ -88,6 +153,14 @@ export default function SettingsScreen(_props: SettingsScreenProps) {
 							trailing={
 								<Text variant="text-sm/medium" color="text-muted">
 									{describeSidebarInjection()}
+								</Text>
+							}
+						/>
+						<TableRow
+							label="Message dock injection"
+							trailing={
+								<Text variant="text-sm/medium" color="text-muted">
+									{describeDockInjection()}
 								</Text>
 							}
 						/>

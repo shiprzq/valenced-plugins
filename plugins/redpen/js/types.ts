@@ -10,6 +10,12 @@ export interface RedpenSettings {
 	previewMode: boolean
 	/** Render the per-channel button in the channel list. Default `true`. */
 	showSidebarButton: boolean
+	/** Render the Redpen button in the message dock. Default `true`. */
+	showDockButton: boolean
+	/** Correct outgoing messages in place, before Discord sends them. Default `true`. */
+	autoCorrectOutgoing: boolean
+	/** Rule groups the user turned off in settings. Empty means every rule runs. */
+	disabledRules: string[]
 	/** Read-only, mirrored from `corrector.ts`. */
 	correctorVersion: string
 	/**
@@ -27,6 +33,9 @@ export interface RedpenStorage {
 export const DEFAULT_SETTINGS: RedpenSettings = {
 	previewMode: true,
 	showSidebarButton: true,
+	showDockButton: true,
+	autoCorrectOutgoing: true,
+	disabledRules: [],
 	correctorVersion: CORRECTOR_VERSION,
 	userDictionary: {},
 }

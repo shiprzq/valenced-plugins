@@ -3,6 +3,7 @@ import { Design } from '@valenced/discord/design'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Platform, StyleSheet, TextInput, View } from 'react-native'
 import { correct } from '../corrector'
+import { correctorOptions } from '../settings'
 import { sendToChannel } from '../send'
 import { readRedpenSettings } from '../settings'
 import {
@@ -104,7 +105,7 @@ export default function InputSheet({ channelId, channelName }: InputSheetProps) 
 
 		// Read settings at action time so toggles apply to the next send, no reload.
 		const settings = readRedpenSettings()
-		const result = correct(draft, { dictionary: settings.userDictionary })
+		const result = correct(draft, correctorOptions())
 
 		if (settings.previewMode) {
 			openPreview(result.corrected, result.changes)

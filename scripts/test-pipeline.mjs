@@ -196,6 +196,11 @@ port = server.address().port
 const workDir = await mkdtemp(join(tmpdir(), 'valenced-index-'))
 const zipBytes = await readFile(join(ROOT, 'dist', 'com.redpen.plugin.zip'))
 const manifestBytes = await readFile(join(ROOT, 'plugins', 'redpen', 'manifest.json'))
+/** The version currently checked in; release tags in the fixture are built from it. */
+const VERSION = JSON.parse(manifestBytes.toString('utf8')).version
+const TAG = `v${VERSION}`
+/** A version that sorts above the checked-in one, for the multi-release case. */
+const NEXT_VERSION = `${VERSION.replace(/(-.*)$/, '').split('.').slice(0, -1).join('.')}.${Number(VERSION.replace(/(-.*)$/, '').split('.').pop()) + 1}-beta1`
 
 /** Runs build-index.mjs against the mock API. Never throws. */
 async function buildIndex(extraEnv = {}, outPath = join(workDir, 'index.json')) {
@@ -220,7 +225,7 @@ async function buildIndex(extraEnv = {}, outPath = join(workDir, 'index.json')) 
 }
 
 await section('build-index.mjs against a mock GitHub API', async () => {
-	scenario.releases = [{ tag: 'v1.0.0', assets: [{ name: 'com.redpen.plugin.zip', bytes: zipBytes }] }]
+	scenario.releases = [{ tag: TAG, assets: [{ name: 'com.redpen.plugin.zip', bytes: zipBytes }] }]
 
 	const outPath = join(workDir, 'index.json')
 	const result = await buildIndex({}, outPath)
@@ -233,10 +238,10 @@ await section('build-index.mjs against a mock GitHub API', async () => {
 
 	const plugin = index.plugins['com.redpen.plugin']
 	check('plugin name matches the manifest', plugin.name === JSON.parse(manifestBytes).name)
-	check('channels.latest points at 1.0.0', plugin.channels.latest === '1.0.0', JSON.stringify(plugin.channels))
+	check(`channels.latest points at ${VERSION}`, plugin.channels.latest === VERSION, JSON.stringify(plugin.channels))
 	check('no manifest echo inside the index', !('manifest' in plugin) && !('download' in plugin))
 
-	const version = plugin.versions['1.0.0']
+	const version = plugin.versions[VERSION]
 	check('version url is absolute', /^https?:\/\//.test(version.url), version.url)
 	check(
 		'sha256 matches the actual ZIP bytes',
@@ -261,7 +266,7 @@ await section('build-index.mjs against a mock GitHub API', async () => {
 
 	// Fail loud: an asset with no matching plugins/<dir>.
 	scenario.releases = [{
-		tag: 'v1.0.0',
+		tag: TAG,
 		assets: [
 			{ name: 'com.redpen.plugin.zip', bytes: zipBytes },
 			{ name: 'com.ghost.plugin.zip', bytes: zipBytes },
@@ -288,16 +293,16 @@ await section('build-index.mjs against a mock GitHub API', async () => {
 		{ name: 'manifest.json', data: Buffer.from(JSON.stringify({ ...JSON.parse(manifestBytes), version: '9.9.9' }, null, '\t') + '\n') },
 		{ name: 'index.js', data: readZipEntries(zipBytes).get('index.js') },
 	])
-	scenario.releases = [{ tag: 'v1.0.0', assets: [{ name: 'com.redpen.plugin.zip', bytes: tamperedZip }] }]
+	scenario.releases = [{ tag: TAG, assets: [{ name: 'com.redpen.plugin.zip', bytes: tamperedZip }] }]
 	const mismatch = await buildIndex()
 	check('fails when the artifact manifest disagrees with the tag', mismatch.code !== 0)
 	check('explains the mismatch', /version/i.test(mismatch.stderr), mismatch.stderr.trim())
 
 	// Prereleases and multi-release history.
 	scenario.releases = [
-		{ tag: 'v1.0.0', assets: [{ name: 'com.redpen.plugin.zip', bytes: zipBytes }] },
-		{ tag: 'v1.1.0-beta1', assets: [{ name: 'com.redpen.plugin.zip', bytes: createZip([
-			{ name: 'manifest.json', data: Buffer.from(JSON.stringify({ ...JSON.parse(manifestBytes), version: '1.1.0-beta1' }, null, '\t') + '\n') },
+		{ tag: TAG, assets: [{ name: 'com.redpen.plugin.zip', bytes: zipBytes }] },
+		{ tag: `v${NEXT_VERSION}`, assets: [{ name: 'com.redpen.plugin.zip', bytes: createZip([
+			{ name: 'manifest.json', data: Buffer.from(JSON.stringify({ ...JSON.parse(manifestBytes), version: NEXT_VERSION }, null, '\t') + '\n') },
 			{ name: 'index.js', data: Buffer.from('// beta build\n') },
 		]) }] },
 	]
@@ -305,9 +310,9 @@ await section('build-index.mjs against a mock GitHub API', async () => {
 	check('accepts several releases', multi.code === 0, multi.stderr.trim())
 	const multiIndex = JSON.parse(await readFile(outPath, 'utf8'))
 	const multiPlugin = multiIndex.plugins['com.redpen.plugin']
-	check('keeps every version', Object.keys(multiPlugin.versions).join(',') === '1.0.0,1.1.0-beta1', Object.keys(multiPlugin.versions).join(','))
-	check('latest stays on the highest stable', multiPlugin.channels.latest === '1.0.0', multiPlugin.channels.latest)
-	check('beta tracks the prerelease', multiPlugin.channels.beta === '1.1.0-beta1', multiPlugin.channels.beta)
+	check('keeps every version', Object.keys(multiPlugin.versions).join(',') === `${VERSION},${NEXT_VERSION}`, Object.keys(multiPlugin.versions).join(','))
+	check('latest stays on the highest stable', multiPlugin.channels.latest === VERSION, multiPlugin.channels.latest)
+	check('beta tracks the prerelease', multiPlugin.channels.beta === NEXT_VERSION, multiPlugin.channels.beta)
 })
 
 await new Promise(resolveClosed => server.close(resolveClosed))

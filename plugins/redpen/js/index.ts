@@ -11,8 +11,17 @@ import {
 	readRedpenSettings,
 	registerRedpenSettings,
 } from './settings'
-import { describeSendAction, registerMessageActions, setSendLogger } from './send'
-import { CORRECTOR_VERSION } from './corrector'
+import {
+	describeSendAction,
+	getMessageActionsModule,
+	installOutgoingCorrection,
+	registerMessageActions,
+	resetSendState,
+	setSendLogger,
+} from './send'
+import { installDock } from './dock'
+import { CORRECTOR_VERSION, correctText } from './corrector'
+import { correctorOptions } from './settings'
 import { installSidebar } from './sidebar'
 import {
 	isChannelOpen,
@@ -35,6 +44,40 @@ import {
 
 /** How long to wait for Discord's sheet layer to mount our component. */
 const SHEET_MOUNT_TIMEOUT_MS = 2500
+
+/** Only one `sendMessage` rewrite may be installed at a time. */
+let outgoingPatch: (() => void) | undefined
+
+/**
+ * Installs the "correct what I actually send" rewrite.
+ *
+ * Idempotent: it is attempted when the message-actions module is found and again on the
+ * first dock press, and only the first successful attempt keeps a patch.
+ */
+function installOutgoingRewrite(
+	cleanup: (fn: () => void) => void,
+	isEnabled: () => boolean,
+): void {
+	if (outgoingPatch) return
+
+	const module = getMessageActionsModule()
+	if (!module) return
+
+	try {
+		const unpatch = installOutgoingCorrection(
+			module,
+			content => correctText(content, correctorOptions()),
+			isEnabled,
+		)
+		outgoingPatch = unpatch
+		cleanup(() => {
+			outgoingPatch = undefined
+			unpatch()
+		})
+	} catch {
+		// A failed patch must never stop the plugin from loading.
+	}
+}
 
 /**
  * Redpen — spelling, punctuation and grammar cleanup for outgoing messages.
@@ -73,6 +116,7 @@ export default plugin<{ jsonStorage: RedpenStorage }>({
 					try {
 						if (registerMessageActions(module, id, logger)) {
 							logger.log(`[redpen] send action ready (${describeSendAction()})`)
+							installOutgoingRewrite(cleanup, () => readRedpenSettings().autoCorrectOutgoing)
 						}
 					} catch (error) {
 						// Exceptions inside finder callbacks are swallowed; surface them here.
@@ -82,6 +126,25 @@ export default plugin<{ jsonStorage: RedpenStorage }>({
 				{ max: 1 },
 			),
 		)
+
+		/* ---------------------------------------------------------------- dock */
+		cleanup(
+			installDock({
+				logger,
+				isEnabled: () => readRedpenSettings().showDockButton,
+				onError: error => plugin.reportError(error),
+				onDegrade: () => {
+					ToastActionCreators.open('REDPEN_DOCK_UNAVAILABLE', {
+						text: 'Redpen: message dock button unavailable in this build.',
+						variant: 'critical',
+						duration: 4000,
+					})
+				},
+			}).dispose,
+		)
+
+		/* ------------------------------------------- correct outgoing messages */
+		installOutgoingRewrite(cleanup, () => readRedpenSettings().autoCorrectOutgoing)
 
 		/* ------------------------------------------------------------- sidebar */
 		cleanup(
@@ -120,7 +183,10 @@ export default plugin<{ jsonStorage: RedpenStorage }>({
 
 	stop() {
 		// `api.cleanup` callbacks run automatically, in reverse registration order.
-		// All that is left is module state: the per-channel open set and in-flight flags.
+		// All that is left is module state: the per-channel open set, in-flight flags and
+		// the resolved send candidates.
+		outgoingPatch = undefined
+		resetSendState()
 		resetState()
 	},
 

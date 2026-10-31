@@ -14,7 +14,7 @@
 
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { CORRECTOR_VERSION, correct, correctText } from './corrector.ts'
+import { CORRECTOR_VERSION, RULE_LABELS, correct, correctText } from './corrector.ts'
 
 const fix = (input: string) => correctText(input)
 const rules = (input: string) => correct(input).changes.map(change => change.rule)
@@ -289,5 +289,79 @@ describe('idempotence', () => {
 			if (result.corrected === result.original) assert.deepEqual(result.changes, [])
 			else assert.ok(result.changes.length > 0)
 		}
+	})
+})
+
+describe('expanded rule set', () => {
+	it('fixes wordy phrases', () => {
+		assert.equal(fix('in order to win'), 'To win.')
+		assert.equal(fix('due to the fact that it rained'), 'Because it rained.')
+		assert.equal(fix('we should of known'), 'We should have known.')
+		assert.equal(fix('prior to the meeting'), 'Before the meeting.')
+	})
+
+	it('fixes misheard idioms', () => {
+		assert.equal(
+			fix('for all intensive purposes it is done'),
+			'For all intents and purposes it is done.',
+		)
+		assert.equal(fix('i could care less'), "I couldn't care less.")
+		assert.equal(fix('it peaked my interest'), 'It piqued my interest.')
+	})
+
+	it('fixes grammar agreement', () => {
+		assert.equal(fix('he don\'t care'), 'He doesn\'t care.')
+		assert.equal(fix('they was late'), 'They were late.')
+		assert.equal(fix('she have a plan'), 'She has a plan.')
+		assert.equal(fix('they have went home'), 'They have gone home.')
+	})
+
+	it('picks a or an by sound', () => {
+		assert.equal(fix('a apple'), 'An apple.')
+		assert.equal(fix('an user'), 'A user.')
+		assert.equal(fix('a hour'), 'An hour.')
+		assert.equal(fix('an honest mistake'), 'An honest mistake.')
+	})
+
+	it('capitalises the pronoun inside contractions', () => {
+		assert.equal(fix('im ready and ive checked'), "I'm ready and I've checked.")
+		assert.equal(fix("i'll do it"), "I'll do it.")
+	})
+
+	it('catches plurals of known misspellings', () => {
+		assert.equal(fix('my freinds'), 'My friends.')
+		assert.equal(fix('thier opinions'), 'Their opinions.')
+	})
+
+	it('never rewrites mentions, channel links or custom emoji', () => {
+		assert.equal(fix('<@123> dont worry'), "<@123> don't worry.")
+		assert.equal(fix('<#456> is quiet'), '<#456> is quiet.')
+		assert.equal(fix('<:redpen:789> alot'), '<:redpen:789> a lot.')
+		assert.equal(fix('https://example.com/a..b is fine'), 'https://example.com/a..b is fine.')
+	})
+
+	it('skips a whole rule family on request', () => {
+		const input = 'definately a apple'
+		assert.equal(correct(input, { skip: ['misspellings'] }).corrected, 'Definately an apple.')
+		assert.equal(correct(input, { skip: ['articles'] }).corrected, 'Definitely a apple.')
+		assert.equal(correct(input).corrected, 'Definitely an apple.')
+	})
+
+	it('exposes the version and rule labels', () => {
+		assert.equal(CORRECTOR_VERSION, '2.0.0')
+		assert.ok(RULE_LABELS.length >= 10)
+		assert.ok(RULE_LABELS.every(rule => rule.id && rule.label && rule.description))
+	})
+
+	it('keeps ordinary prose untouched', () => {
+		const prose = [
+			'The quick brown fox jumps over the lazy dog.',
+			'I will send the report tomorrow morning.',
+			'She said "hello" and left.',
+			'We met at 5 pm on Tuesday.',
+			'Use the API to fetch 3 items.',
+			'Is this correct?',
+		]
+		for (const input of prose) assert.equal(fix(input), input)
 	})
 })
