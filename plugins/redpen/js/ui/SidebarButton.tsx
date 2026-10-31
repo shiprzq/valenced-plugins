@@ -65,6 +65,7 @@ const styles = StyleSheet.create({
 		width: 20,
 		height: 20,
 		marginRight: 4,
+		flexShrink: 0,
 		alignItems: 'center',
 		justifyContent: 'center',
 		opacity: 0.6,

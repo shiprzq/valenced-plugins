@@ -1,7 +1,7 @@
 import { Stores } from '@valenced/discord/flux'
 import { ReactJSXRuntime } from '@valenced/react'
 import { before } from '@valenced/patcher'
-import { createElement, isValidElement } from 'react'
+import { cloneElement, createElement, isValidElement } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import { Text, TextInput, View } from 'react-native'
 import DockButton from './ui/DockButton'
@@ -88,8 +88,6 @@ export function describeInjectionSamples(): string {
 /* -------------------------------------------------------------------------- */
 
 const DOCK_MARKER = 'redpen-dock'
-const ROW_WRAPPER = { flexDirection: 'row' as const, alignItems: 'center' as const }
-const ROW_SLOT = { flex: 1 as const, minWidth: 0 as const }
 /** Props that identify the message composer's text field. */
 const COMPOSER_PLACEHOLDER = /^(?:message|nachricht|mensaje|messaggio|message…)\b/i
 
@@ -196,25 +194,24 @@ interface ChildrenEdit {
 	changed: boolean
 }
 
-/**
- * Does this child hold a channel-qualified text input? Nested arrays are searched because
- * conditionals like `{flag && [...]}` put their children inside their own array.
- */
-function findComposerInput(children: ReactNode[]): ReactNode | undefined {
-	for (const child of children) {
-		if (Array.isArray(child)) {
-			const nested = findComposerInput(child)
-			if (nested) return nested
-			continue
-		}
-		if (isComposerInput(child)) return child
-	}
-	return undefined
+function isDockElement(child: ReactNode): boolean {
+	return isValidElement(child) && (child as { key?: string | null }).key === DOCK_MARKER
 }
 
-function isDockElement(child: ReactNode): boolean {
-	return isValidElement(child) && (child as ReactElement<{ key?: string }>).key === DOCK_MARKER
+/** True when a channel row already carries our button, so a reused element is not doubled. */
+function hasRowButton(row: ReactNode): boolean {
+	const props = propsOf(row)
+	if (!props) return false
+	const children = toArray(props.children as ReactNode) ?? []
+	return children.some(
+		child =>
+			isValidElement(child) &&
+			(child as { key?: string | null }).key === 'redpen-row-button',
+	)
 }
+
+/** Keeps the composer input from being covered by the button next to it. */
+const COMPOSER_INPUT_STYLE = { width: undefined, flexGrow: 1, flexShrink: 1, minWidth: 0 }
 
 /**
  * Appends what Redpen needs to one children array. Runs for every element the app renders,
@@ -229,83 +226,86 @@ function editChildren(
 	let next: ReactNode[] | undefined
 	const writable = (): ReactNode[] => (next ??= [...children])
 
-	/* ---------------------------------------------------------------- dock */
-	if (options.isDockEnabled()) {
-		const composer = findComposerInput(children)
-		if (composer && !children.some(isDockElement)) {
-			const composerProps = propsOf(composer) ?? {}
+	const dockEnabled = options.isDockEnabled()
+	const rowsEnabled = options.isRowButtonEnabled()
+
+	for (let index = 0; index < children.length; index++) {
+		const child = children[index]
+
+		// Conditionals put their children in their own array; treat it as another level.
+		if (Array.isArray(child)) {
+			const nested = editChildren(child, props, options)
+			if (nested.changed) writable()[index] = nested.children
+			continue
+		}
+
+		/* ------------------------------------------------------------- dock */
+		if (dockEnabled && isComposerInput(child)) {
+			const composerProps = propsOf(child) ?? {}
 			if (!stats.composerSample) {
 				stats.composerSample = `placeholder=${JSON.stringify(composerProps.placeholder ?? '')} props=${describeKeys(composerProps)}`
 			}
 
-			const channel =
-				(isTextChannel(composerProps.channel) ? composerProps.channel : undefined) ??
-				(isTextChannel(props.channel) ? props.channel : undefined)
-			const channelId = channel?.id ?? currentChannelId()
+			if (!children.some(isDockElement)) {
+				const channel =
+					(isTextChannel(composerProps.channel) ? composerProps.channel : undefined) ??
+					(isTextChannel(props.channel) ? props.channel : undefined)
+				const channelId = channel?.id ?? currentChannelId()
 
-			if (channelId) {
-				writable().push(
-					createElement(
-						Guard,
-						{ key: DOCK_MARKER, onError: options.onError },
-						createElement(DockButton, {
-							key: 'redpen-dock-button',
-							channelId,
-							channelName: channelLabel(channel ?? resolveChannel(channelId)),
-						}),
-					),
-				)
-				stats.dockInjected += 1
-			}
-		}
-	}
+				if (channelId) {
+					// Let the input give up width instead of being covered by the button.
+					writable()[index] = cloneElement(child as ReactElement, {
+						style: [composerProps.style, COMPOSER_INPUT_STYLE],
+					})
 
-	/* ---------------------------------------------------------------- rows */
-	if (options.isRowButtonEnabled()) {
-		for (let index = 0; index < children.length; index++) {
-			const child = children[index]
-
-			if (Array.isArray(child)) {
-				const nested = editChildren(child, props, options)
-				if (nested.changed) {
-					writable()[index] = nested.children
+					writable().push(
+						createElement(
+							Guard,
+							{ key: DOCK_MARKER, onError: options.onError },
+							createElement(DockButton, {
+								key: 'redpen-dock-button',
+								channelId,
+								channelName: channelLabel(channel ?? resolveChannel(channelId)),
+							}),
+						),
+					)
+					stats.dockInjected += 1
 				}
-				continue
 			}
+			continue
+		}
 
-			const channel = rowChannel(child)
-			if (!channel || isRowWrapped(child)) continue
+		/* ------------------------------------------------------------- rows */
+		if (!rowsEnabled) continue
 
-			if (!stats.rowSample) {
-				stats.rowSample = `props=${describeKeys(propsOf(child) ?? {})}`
-			}
+		const channel = rowChannel(child)
+		if (!channel || hasRowButton(child)) continue
 
-			writable()[index] = createElement(
-				Guard,
-				{ key: `redpen-row-${channel.id}`, onError: options.onError },
+		if (!stats.rowSample) {
+			stats.rowSample = `props=${describeKeys(propsOf(child) ?? {})}`
+		}
+
+		// Add the button inside the row instead of wrapping it: a new wrapper changes the
+		// row's width and every text inside it, which is what broke the channel list.
+		const rowChildren = toArray((propsOf(child) ?? {}).children as ReactNode) ?? []
+		writable()[index] = cloneElement(child as ReactElement<{ children?: ReactNode }>, {
+			children: [
+				...rowChildren,
 				createElement(
-					View,
-					{ style: ROW_WRAPPER, collapsable: false },
-					createElement(View, { key: 'redpen-row-slot', style: ROW_SLOT }, child as ReactElement),
+					Guard,
+					{ key: 'redpen-row-guard', onError: options.onError },
 					createElement(SidebarButton, {
 						key: 'redpen-row-button',
 						channelId: channel.id,
 						channelName: channelLabel(channel),
 					}),
 				),
-			)
-			stats.rowsInjected += 1
-		}
+			],
+		})
+		stats.rowsInjected += 1
 	}
 
 	return next ? { children: next, changed: true } : { children, changed: false }
-}
-
-/** Guards against wrapping the same row twice if the tree is re-created inside our wrapper. */
-function isRowWrapped(element: ReactNode): boolean {
-	if (!isValidElement(element)) return false
-	const key = (element as ReactElement<{ key?: string }>).key
-	return typeof key === 'string' && key.startsWith('redpen-row-')
 }
 
 function injectIntoProps(

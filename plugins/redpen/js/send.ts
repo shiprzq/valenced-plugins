@@ -79,6 +79,18 @@ const STRATEGIES: Strategy[] = [
 		build: (channelId, message) => [channelId, message],
 	},
 	{
+		id: 'options-nonce-empty',
+		label: 'sendMessage(channel, message, { nonce }, {})',
+		arity: 4,
+		build: (channelId, message, nonce) => [channelId, message, { nonce }, {}],
+	},
+	{
+		id: 'message+options',
+		label: 'sendMessage(channel, message, {})',
+		arity: 3,
+		build: (channelId, message) => [channelId, message, {}],
+	},
+	{
 		id: 'legacy-clearDraft',
 		label: 'sendMessage(channel, message, false)',
 		arity: 3,
@@ -93,6 +105,9 @@ const STRATEGIES: Strategy[] = [
 ]
 
 const DEFAULT_STRATEGY = 'nonce'
+
+/** Module id used for Discord's action-creator candidate. */
+const ACTIONS_MODULE_ID = -1
 
 let candidates: Candidate[] = []
 let preferredStrategy: string | undefined
@@ -185,8 +200,44 @@ function strategyScore(candidate: Candidate): number {
 	return score
 }
 
+/**
+ * Discord's flux action creators are the canonical send path: the composer calls
+ * `MessageActions.sendMessage`, so its signature is the one the app itself uses. It is
+ * reached through the runtime global rather than an import so a build without it simply
+ * falls back to the store module.
+ */
+function registerActionsCandidate(log: RedpenLogger): boolean {
+	if (candidates.some(candidate => candidate.moduleId === ACTIONS_MODULE_ID)) return false
+
+	try {
+		const actions = (globalThis as Record<string, unknown>).valenced as
+			| { discord?: { actions?: Record<string, unknown> } }
+			| undefined
+		const messageActions = actions?.discord?.actions?.MessageActions
+		if (!messageActions || typeof messageActions !== 'object') return false
+
+		const sendMessage = (messageActions as Record<string, unknown>).sendMessage
+		if (typeof sendMessage !== 'function') return false
+
+		candidates = [
+			{
+				sendMessage: sendMessage as (...args: unknown[]) => unknown,
+				module: messageActions as Record<string, unknown>,
+				moduleId: ACTIONS_MODULE_ID,
+				arity: (sendMessage as (...args: unknown[]) => unknown).length,
+			},
+			...candidates,
+		]
+		log.log(`[send] using MessageActions.sendMessage (/${(sendMessage as Function).length || 0} args)`)
+		return true
+	} catch {
+		return false
+	}
+}
+
 /** Last-chance lookup when the module initialised after `start`. */
 function resolveOnDemand(): Candidate | undefined {
+	registerActionsCandidate(logger ?? SILENT_LOGGER)
 	if (candidates.length > 0) return candidates[0]
 
 	try {
@@ -222,9 +273,11 @@ function orderedStrategies(candidate: Candidate): Strategy[] {
 export function describeSendAction(): string {
 	if (candidates.length === 0) return 'not found'
 	const [candidate] = candidates
+	const source = candidate.moduleId === ACTIONS_MODULE_ID ? 'MessageActions' : `module ${candidate.moduleId}`
 	const strategy = preferredStrategy ?? DEFAULT_STRATEGY
 	const label = STRATEGIES.find(entry => entry.id === strategy)?.label ?? strategy
-	return `module ${candidate.moduleId}, sendMessage/${candidate.arity} → ${label}`
+	const shapes = preferredStrategy ? '' : ` (${STRATEGIES.length} shapes queued)`
+	return `${source}, sendMessage/${candidate.arity} → ${label}${shapes}`
 }
 
 export function hasSendAction(): boolean {
@@ -287,10 +340,18 @@ export async function sendToChannel(channelId: string, content: string): Promise
 					await (pending as PromiseLike<unknown>)
 				}
 			} catch (error) {
-				// Asynchronous: something was dispatched. Never retry — it may already be posted.
 				const detail = describeError(error)
-				logger?.error(`[send] ${strategy.id} rejected for ${channelId}: ${detail}`)
-				throw new SendError(`Send failed: ${detail}`)
+
+				// A contract error means the call died while reading its own arguments, so
+				// nothing was dispatched and another shape is safe to try. Anything else is a
+				// real failure: the message may already be in flight, so never retry.
+				if (!isContractError(error)) {
+					logger?.error(`[send] ${strategy.id} rejected for ${channelId}: ${detail}`)
+					throw new SendError(`Send failed: ${detail}`)
+				}
+
+				logger?.warn(`[send] ${strategy.id} is not this build's shape: ${detail}`)
+				failures.push(`${strategy.id}: ${detail}`)
 			}
 
 			preferredStrategy = strategy.id
@@ -307,6 +368,22 @@ export async function sendToChannel(channelId: string, content: string): Promise
 	} finally {
 		endSend(channelId)
 	}
+}
+
+/**
+ * True when the failure is Discord rejecting the *arguments* rather than the message.
+ *
+ * `Cannot read property 'nonce' of undefined` is the classic case: the function read a
+ * field off an argument that this call shape did not provide, so it threw before
+ * dispatching anything. Those are safe to retry with the next shape; network and
+ * rate-limit failures are not.
+ */
+function isContractError(error: unknown): boolean {
+	if (error instanceof TypeError) return true
+	const message = error instanceof Error ? error.message : String(error ?? '')
+	return /Cannot read|undefined is not an object|cannot destructure|is not a function|not iterable|undefined is not a function/i.test(
+		message,
+	)
 }
 
 function describeError(error: unknown): string {

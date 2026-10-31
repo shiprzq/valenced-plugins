@@ -63,6 +63,8 @@ const styles = StyleSheet.create({
 	button: {
 		width: 32,
 		height: 32,
+		marginLeft: 2,
+		flexShrink: 0,
 		alignItems: 'center',
 		justifyContent: 'center',
 		opacity: 0.85,
