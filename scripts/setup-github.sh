@@ -60,6 +60,13 @@ json_field() {
 	node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const v=JSON.parse(s)[process.argv[1]];process.stdout.write(v==null?"":String(v))}catch{}})' "$1"
 }
 
+# Authenticated git: the token travels in a one-off config flag, never in a remote URL.
+git_auth() {
+	local basic
+	basic="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+	git -c "http.extraheader=AUTHORIZATION: basic ${basic}" "$@"
+}
+
 run() {
 	if [[ "$DRY_RUN" == "1" ]]; then
 		printf '    [dry-run] %s\n' "$*"
@@ -172,8 +179,7 @@ fi
 if [[ "$DRY_RUN" == "1" ]]; then
 	printf '    [dry-run] git push -u origin main  (authenticated with GH_TOKEN)\n'
 else
-	git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" \
-		push -u origin main
+	git_auth push -u origin main
 fi
 
 # ---------------------------------------------------------------- 5. first release tag
@@ -186,11 +192,27 @@ fi
 if [[ "$DRY_RUN" == "1" ]]; then
 	printf '    [dry-run] git push origin %s  (authenticated with GH_TOKEN)\n' "$TAG"
 else
-	git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" \
-		push origin "$TAG"
+	git_auth push origin "$TAG"
 fi
 
 INDEX_URL="https://${OWNER}.github.io/${REPO}/index.json"
+
+# A brand-new repository sometimes drops the very first tag-push event. If no run
+# registered within 40s, re-push the tag once: same commit, same assets, nothing lost.
+say "Confirming the tag triggered the release workflow"
+RUNS="0"
+for _ in $(seq 1 8); do
+	RUNS="$(api GET "${API}/repos/${OWNER}/${REPO}/actions/runs?per_page=5" | json_field total_count)"
+	[[ "${RUNS:-0}" != "0" ]] && break
+	sleep 5
+done
+if [[ "${RUNS:-0}" == "0" ]]; then
+	note "no run registered, re-pushing the tag once"
+	git_auth push --delete origin "$TAG"
+	git_auth push origin "$TAG"
+else
+	note "release workflow queued"
+fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
 	printf '\nDry run complete. Nothing was created or pushed.\n'

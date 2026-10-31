@@ -8,7 +8,7 @@ Tag a commit and the whole thing republishes itself; nobody edits `index.json` b
 git push origin v1.0.0
    └─ build.yml   npm ci → build → zip → validate → GitHub Release with dist/<plugin-id>.zip
         └─ pages.yml   read releases from the REST API → hash the artifacts → write index.json
-             └─ GitHub Pages   https://<OWNER>.github.io/<REPO>/index.json
+             └─ GitHub Pages   https://shiprzq.github.io/valenced-plugins/index.json
                   └─ Valenced   Repository URL → Add repository → install / update
 ```
 
@@ -46,7 +46,7 @@ shape installs nothing at all. This repository emits exactly this:
 			},
 			"versions": {
 				"1.0.0": {
-					"url": "https://github.com/<OWNER>/<REPO>/releases/download/v1.0.0/com.redpen.plugin.zip",
+					"url": "https://github.com/shiprzq/valenced-plugins/releases/download/v1.0.0/com.redpen.plugin.zip",
 					"sha256": "43fee112dfa31a676b082d389d0d5e3f78bc13426ad26dd0910a23455afd1fc1",
 					"size": 11637,
 					"dependencies": {
@@ -133,8 +133,8 @@ repository, set the Pages source to GitHub Actions, grant the workflow token wri
 `main`, tag the manifest version, and wait for the release and deploy to finish.
 
 ```bash
-GH_TOKEN=<token> ./scripts/setup-github.sh <OWNER> <REPO>          # e.g. someuser valenced-plugins
-DRY_RUN=1 ./scripts/setup-github.sh <OWNER> <REPO>                 # print the plan, change nothing
+GH_TOKEN=<token> ./scripts/setup-github.sh shiprzq valenced-plugins          # e.g. someuser valenced-plugins
+DRY_RUN=1 ./scripts/setup-github.sh shiprzq valenced-plugins                 # print the plan, change nothing
 ```
 
 Token permissions on that repository: **Contents: write**, **Administration: write** (repo
@@ -147,7 +147,7 @@ The script aborts before touching GitHub if the tag version does not match
 branch. `scripts/gh-watch.mjs` is the watcher it calls; run it alone to re-check a deploy:
 
 ```bash
-GH_TOKEN=<token> node scripts/gh-watch.mjs <OWNER> <REPO> v1.0.0
+GH_TOKEN=<token> node scripts/gh-watch.mjs shiprzq valenced-plugins v1.0.0
 # exit 0 deployed, 1 workflow failed, 2 timed out, 3 API/auth problem
 ```
 
@@ -164,7 +164,7 @@ git init
 git add -A
 git commit -m "Initial commit: plugin repository"
 git branch -M main
-git remote add origin https://github.com/<OWNER>/<REPO>.git
+git remote add origin https://github.com/shiprzq/valenced-plugins.git
 git push -u origin main
 ```
 
@@ -176,7 +176,7 @@ and npm metadata.
 
 ## Step 2 — replace the placeholders
 
-`<OWNER>` and `<REPO>` appear literally in exactly two files:
+`shiprzq` and `valenced-plugins` appear literally in exactly two files:
 
 | File | Where |
 | --- | --- |
@@ -187,7 +187,7 @@ Replace them (or leave the README examples as `<PLACEHOLDER>`-style text if you 
 confirm nothing is left behind:
 
 ```bash
-grep -rn --exclude-dir=node_modules --exclude-dir=.git -e '<OWNER>' -e '<REPO>' .
+grep -rn --exclude-dir=node_modules --exclude-dir=.git -e 'shiprzq' -e 'valenced-plugins' .
 ```
 
 ---
@@ -201,7 +201,7 @@ an artifact and calls `deploy-pages`, which only works with the Actions source.
 
 The first deploy happens after the **first published release**, not after the first push: until a
 release exists there is nothing to index, so `build-index.mjs` refuses to invent one. A 404 on
-`https://<OWNER>.github.io/<REPO>/index.json` before step 5 is expected.
+`https://shiprzq.github.io/valenced-plugins/index.json` before step 5 is expected.
 
 ---
 
@@ -248,14 +248,14 @@ that already has an asset is refused on purpose.
 ## Step 6 — verify the published index
 
 ```bash
-curl -s https://<OWNER>.github.io/<REPO>/index.json | head -40
+curl -s https://shiprzq.github.io/valenced-plugins/index.json | head -40
 ```
 
 Check that `format` is `1`, that `plugins` contains your id, and that the version entry's `url`
 points at the release asset. Confirm the hash the client will enforce:
 
 ```bash
-URL=$(curl -s https://<OWNER>.github.io/<REPO>/index.json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).plugins['com.redpen.plugin'].versions['1.0.0'].url))")
+URL=$(curl -s https://shiprzq.github.io/valenced-plugins/index.json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).plugins['com.redpen.plugin'].versions['1.0.0'].url))")
 curl -sL "$URL" -o /tmp/plugin.zip
 sha256sum /tmp/plugin.zip     # must equal the index's sha256
 stat -c%s /tmp/plugin.zip     # must equal the index's size
@@ -268,7 +268,7 @@ stat -c%s /tmp/plugin.zip     # must equal the index's size
 Open Valenced → **Plugins → Repository URL** (Add repository), paste
 
 ```
-https://<OWNER>.github.io/<REPO>/index.json
+https://shiprzq.github.io/valenced-plugins/index.json
 ```
 
 and add it. The plugin list appears immediately; install from the `latest` channel. Installed
@@ -346,8 +346,8 @@ tag/manifest mismatch) all exit non-zero.
 To exercise the generator against the real API without deploying:
 
 ```bash
-GITHUB_REPOSITORY=<OWNER>/<REPO> GITHUB_TOKEN=$(gh auth token) node scripts/build-index.mjs --out /tmp/index.json
-ALLOW_UNRELEASED=1 GITHUB_REPOSITORY=<OWNER>/<REPO> node scripts/build-index.mjs --out /tmp/empty.json
+GITHUB_REPOSITORY=shiprzq/valenced-plugins GITHUB_TOKEN=$(gh auth token) node scripts/build-index.mjs --out /tmp/index.json
+ALLOW_UNRELEASED=1 GITHUB_REPOSITORY=shiprzq/valenced-plugins node scripts/build-index.mjs --out /tmp/empty.json
 ```
 
 ---
@@ -377,6 +377,11 @@ by `GITHUB_TOKEN`, so `release: published` alone would miss releases created by 
 is why `pages.yml` also listens to `workflow_run` on *Build and release*. Manually published
 releases and `workflow_dispatch` are the other two paths, and all three converge on the same
 concurrency group.
+
+**The first tag push did nothing.** On a brand-new repository GitHub occasionally drops the
+first tag-push event when the tag arrives in the same second as the branch (the workflow files are
+being indexed). Re-push the tag — `git push --delete origin v1.0.0 && git push origin v1.0.0` —
+which is safe before a release exists. `scripts/setup-github.sh` detects this and retries once.
 
 **The generator refuses to run.** It fails rather than publishes a partial index. The message names
 the offending asset or plugin:

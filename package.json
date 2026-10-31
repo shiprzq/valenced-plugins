@@ -6,9 +6,9 @@
 	"description": "Valenced plugin repository: sources, release pipeline and generated index.json",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/<OWNER>/<REPO>.git"
+		"url": "git+https://github.com/shiprzq/valenced-plugins.git"
 	},
-	"homepage": "https://<OWNER>.github.io/<REPO>/",
+	"homepage": "https://shiprzq.github.io/valenced-plugins/",
 	"engines": {
 		"node": ">=20"
 	},
