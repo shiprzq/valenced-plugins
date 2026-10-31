@@ -57,7 +57,7 @@ api_status() {
 
 # Prints one top-level string field of a JSON document read from stdin.
 json_field() {
-	node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const v=JSON.parse(s)[process.argv[1]];process.stdout.write(v==null?"":String(v))}catch{}})=' "$1"
+	node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const v=JSON.parse(s)[process.argv[1]];process.stdout.write(v==null?"":String(v))})' "$1"
 }
 
 run() {
@@ -88,7 +88,11 @@ fi
 
 # ---------------------------------------------------------------- 1. repository
 say "1/5 Repository ${OWNER}/${REPO}"
-EXISTS="$(api_status GET "${API}/repos/${OWNER}/${REPO}")"
+if [[ "$DRY_RUN" == "1" ]]; then
+	EXISTS="404"
+else
+	EXISTS="$(api_status GET "${API}/repos/${OWNER}/${REPO}")"
+fi
 if [[ "$EXISTS" == "200" ]]; then
 	note "already exists"
 elif [[ "$EXISTS" == "404" ]]; then
@@ -115,7 +119,11 @@ fi
 
 # ---------------------------------------------------------------- 2. pages source
 say "2/5 Pages source = GitHub Actions"
-PAGES_STATUS="$(api_status GET "${API}/repos/${OWNER}/${REPO}/pages")"
+if [[ "$DRY_RUN" == "1" ]]; then
+	PAGES_STATUS="404"
+else
+	PAGES_STATUS="$(api_status GET "${API}/repos/${OWNER}/${REPO}/pages")"
+fi
 if [[ "$PAGES_STATUS" == "200" ]]; then
 	BUILD_TYPE="$(api GET "${API}/repos/${OWNER}/${REPO}/pages" | json_field build_type)"
 	note "Pages already enabled (build_type=${BUILD_TYPE:-unknown})"
